@@ -17,8 +17,9 @@ export interface Film{
 }
 
 export interface FilmMetadata {
-    countries: string[];
+    countries: string[];  
     genres: string[];
     directors: string[];
-    runmtimeMinutes: number | null;
+    runtimeMinutes: number | null;
+    tmdbId?: number;
 }

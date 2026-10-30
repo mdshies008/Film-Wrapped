@@ -182,3 +182,69 @@
     border-right-color: var(--border);
   }
 }
+.tmdb-match-list {
+  display: grid;
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.tmdb-match-card {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #3b3b46;
+  border-radius: 12px;
+  background: #202027;
+  text-align: left;
+}
+
+.tmdb-match-poster {
+  width: 90px;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #30303a;
+}
+
+.tmdb-poster-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 0.5rem;
+  box-sizing: border-box;
+  color: #aaa;
+  text-align: center;
+}
+
+.tmdb-match-info h4 {
+  margin: 0 0 0.5rem;
+}
+
+.tmdb-match-info p {
+  margin: 0 0 0.5rem;
+}
+
+.tmdb-match-meta {
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+.tmdb-match-overview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+@media (max-width: 520px) {
+  .tmdb-match-card {
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .tmdb-match-poster {
+    width: 68px;
+  }
+}
