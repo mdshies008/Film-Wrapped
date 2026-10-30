@@ -1,4 +1,4 @@
-export type ImportSource = 'letterboxd' | 'imdb';
+export type ImportSource = 'letterboxd';
 
 export interface Film{
     key: string;
@@ -17,9 +17,10 @@ export interface Film{
 }
 
 export interface FilmMetadata {
-    countries: string[];  
+    countries: string[];
     genres: string[];
     directors: string[];
     runtimeMinutes: number | null;
     tmdbId?: number;
+    posterPath?: string | null;
 }

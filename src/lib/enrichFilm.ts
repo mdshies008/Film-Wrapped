@@ -20,7 +20,10 @@ export async function findFilmMetadata(
   film: Film,
 ): Promise<FilmMetadata | null> {
   if (film.metadata?.tmdbId) {
-    return film.metadata;
+    if (film.metadata.posterPath !== undefined) {
+      return film.metadata;
+    }
+    return getTmdbMovieMetadata(film.metadata.tmdbId);
   }
 
   const results = await searchTmdbMovie(film.title, film.year);

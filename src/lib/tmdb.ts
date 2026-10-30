@@ -21,13 +21,13 @@ interface TmdbSearchResponse {
 interface TmdbMovieDetails {
   id: number;
   runtime: number | null;
+  poster_path: string | null;
   genres: Array<{ name: string }>;
   production_countries: Array<{ name: string }>;
   credits: {
     crew: Array<{ job: string; name: string }>;
   };
 }
-
 async function tmdbGet<T>(url: URL): Promise<T> {
   const response = await fetch(url);
 
@@ -73,5 +73,6 @@ export async function getTmdbMovieMetadata(
       ),
     ],
     runtimeMinutes: movie.runtime,
+    posterPath: movie.poster_path,
   };
 }

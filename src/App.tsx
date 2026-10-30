@@ -1,7 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import type { Film } from './types';
-import { readCsv } from './lib/readCsv';
-import { parseImdbRatings } from './lib/parseImdb';
 import { readLetterboxdZip } from './lib/readLetterboxdZip';
 import { parseLetterboxd } from './lib/parseLetterboxd';
 import { loadLibrary, saveLibrary } from './lib/libraryStorage';
@@ -21,6 +19,16 @@ import {
 } from './lib/tmdb';
 import './App.css';
 
+function formatWatchTime(minutes: number): string {
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${remainingMinutes}m`;
+  return `${remainingMinutes}m`;
+}
+
 function App() {
   const [films, setFilms] = useState<Film[]>([]);
   const [status, setStatus] = useState(
@@ -28,6 +36,9 @@ function App() {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'review'>(
+    'dashboard',
+  );
   const [period, setPeriod] = useState('all-time');
 
   const [enrichBusy, setEnrichBusy] = useState(false);
@@ -79,18 +90,12 @@ function App() {
     setStatus(`Reading ${file.name}…`);
 
     try {
-      const fileName = file.name.toLowerCase();
-      let importedFilms: Film[];
-
-      if (fileName.endsWith('.zip')) {
-        const rows = await readLetterboxdZip(file);
-        importedFilms = parseLetterboxd(rows);
-      } else if (fileName.endsWith('.csv')) {
-        const rows = await readCsv(file);
-        importedFilms = parseImdbRatings(rows);
-      } else {
-        throw new Error('Choose a Letterboxd ZIP or IMDb ratings CSV.');
+      if (!file.name.toLowerCase().endsWith('.zip')) {
+        throw new Error('Choose a Letterboxd ZIP export.');
       }
+
+      const rows = await readLetterboxdZip(file);
+      const importedFilms: Film[] = parseLetterboxd(rows);
 
       if (importedFilms.length === 0) {
         throw new Error('No films were found in that file.');
@@ -114,6 +119,8 @@ function App() {
           'The library is available until you close or refresh this page.',
         );
       }
+
+      await enrichLibrary(importedFilms);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : 'Could not import this file.',
@@ -124,10 +131,12 @@ function App() {
     }
   }
 
-  async function enrichLibrary() {
-    const candidates = films.filter(
+  async function enrichLibrary(sourceFilms: Film[] = films) {
+    const candidates = sourceFilms.filter(
       (film) =>
-        (film.watched || film.rating !== null) && !film.metadata?.tmdbId,
+        (film.watched || film.rating !== null) &&
+        (!film.metadata?.tmdbId ||
+          film.metadata.posterPath === undefined),
     );
 
     if (candidates.length === 0) {
@@ -142,7 +151,7 @@ function App() {
     setEnrichError(null);
     setEnrichMessage('');
 
-    const updatedFilms = [...films];
+    const updatedFilms = [...sourceFilms];
     let matchedCount = 0;
     let unmatchedCount = 0;
 
@@ -266,7 +275,7 @@ function App() {
   }
 
   const years = getAvailableYears(films);
-  const watchedCount = films.filter((film) => film.watched).length;
+  const watchedFilms = films.filter((film) => film.watched);
   const ratedFilms = films.filter((film) => film.rating !== null);
   const watchlistCount = films.filter((film) => film.watchlisted).length;
 
@@ -274,6 +283,32 @@ function App() {
     ? ratedFilms.reduce((total, film) => total + (film.rating ?? 0), 0) /
       ratedFilms.length
     : null;
+
+  const filmsWithRuntime = watchedFilms.filter(
+    (film) => typeof film.metadata?.runtimeMinutes === 'number',
+  );
+
+  const totalWatchMinutes = filmsWithRuntime.reduce(
+    (total, film) =>
+      total +
+      (film.metadata?.runtimeMinutes ?? 0) *
+        getPeriodWatchCount(film, 'all-time'),
+    0,
+  );
+
+  const ratingDistribution = Array.from({ length: 10 }, (_, index) => {
+    const rating = (index + 1) / 2;
+    const count = ratedFilms.filter(
+      (film) => Math.round((film.rating ?? 0) * 2) === index + 1,
+    ).length;
+
+    return { rating, count };
+  });
+
+  const maxRatingCount = Math.max(
+    1,
+    ...ratingDistribution.map((bucket) => bucket.count),
+  );
 
   const topRatedFilms = [...ratedFilms]
     .sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1))
@@ -295,241 +330,425 @@ function App() {
 
   return (
     <main>
-      <header>
+      <header className="app-header">
         <p>MY MOVIE ARCHIVE</p>
         <h1>Your films, in perspective.</h1>
-        <p>Import your Letterboxd or IMDb data to get started.</p>
+        <p>Add your Letterboxd data to explore your film history.</p>
       </header>
 
-      <section>
-        <label htmlFor="account-export-file">
-          Choose Letterboxd ZIP or IMDb ratings CSV
-        </label>
-        <input
-          id="account-export-file"
-          type="file"
-          accept=".zip,.csv,application/zip,text/csv"
-          onChange={handleImport}
-          disabled={busy || enrichBusy || manualBusyKey !== null}
-        />
-        <p role="status">{status}</p>
-        {error && <p role="alert">{error}</p>}
+      <div className="app-layout">
+        <nav className="app-tabs" aria-label="Main sections">
+          <button
+            type="button"
+            className={activeTab === 'dashboard' ? 'app-tab active' : 'app-tab'}
+            aria-pressed={activeTab === 'dashboard'}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'review' ? 'app-tab active' : 'app-tab'}
+            aria-pressed={activeTab === 'review'}
+            onClick={() => setActiveTab('review')}
+          >
+            Year in Review
+          </button>
+        </nav>
 
-        <h2>Movie details</h2>
-        <p>
-          Look up director and country information for watched and rated films.
-        </p>
-        <button
-          type="button"
-          onClick={enrichLibrary}
-          disabled={
-            busy || enrichBusy || manualBusyKey !== null || films.length === 0
-          }
-        >
-          {enrichBusy ? 'Enriching library…' : 'Enrich library with TMDB'}
-        </button>
-        {enrichProgress && <p role="status">{enrichProgress}</p>}
-        {enrichMessage && <p role="status">{enrichMessage}</p>}
-        {enrichError && <p role="alert">{enrichError}</p>}
-      </section>
+        <div className="app-page-content">
+          {activeTab === 'dashboard' && (
+            <div className="dashboard-panel">
+              <section className="dashboard-upload">
+                <h2>Your library</h2>
+                <label htmlFor="account-export-file">
+                  Add your Letterboxd data
+                </label>
+                <input
+                  id="account-export-file"
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={handleImport}
+                  disabled={busy || enrichBusy || manualBusyKey !== null}
+                />
+                <p role="status">{status}</p>
+                {error && <p role="alert">{error}</p>}
 
-      {unmatchedFilms.length > 0 && (
-        <section>
-          <h2>Review unmatched films</h2>
-          <p>
-            {unmatchedFilms.length} watched or rated films need a TMDB match.
-            Choose a result only when the title and year are correct.
-          </p>
+                <h3>Movie details</h3>
+                <p>TMDB details are enriched automatically after import.</p>
+                {enrichProgress && <p role="status">{enrichProgress}</p>}
+                {enrichMessage && <p role="status">{enrichMessage}</p>}
+                {enrichError && <p role="alert">{enrichError}</p>}
 
-          {manualMessage && <p role="status">{manualMessage}</p>}
-          {manualError && <p role="alert">{manualError}</p>}
+                {!busy && !enrichBusy && unmatchedFilms.length > 0 && (
+                  <details className="dashboard-matches">
+                    <summary>
+                      <span>Review unmatched films</span>
+                      <span className="unmatched-count">
+                        {unmatchedFilms.length} left
+                      </span>
+                    </summary>
 
-          <ol>
-            {unmatchedFilms.map((film) => {
-              const searchResults = manualSearchResults[film.key];
+                    <p>
+                      {unmatchedFilms.length} watched or rated films need a TMDB
+                      match. Choose a result only when the title and year are
+                      correct.
+                    </p>
 
-              return (
-                <li key={film.key}>
-                  <strong>
-                    {film.title} ({film.year ?? 'year unknown'})
-                  </strong>{' '}
-                  <button
-                    type="button"
-                    onClick={() => void searchManualMatches(film)}
-                    disabled={manualBusyKey !== null || enrichBusy}
-                  >
-                    {manualBusyKey === film.key
-                      ? 'Searching…'
-                      : 'Search TMDB'}
-                  </button>
+                    {manualMessage && <p role="status">{manualMessage}</p>}
+                    {manualError && <p role="alert">{manualError}</p>}
 
-                  {searchResults && searchResults.length === 0 && (
-                    <p>No TMDB results found for this title and year.</p>
-                  )}
+                    <ol>
+                      {unmatchedFilms.map((film) => {
+                        const searchResults = manualSearchResults[film.key];
 
-                  {searchResults && searchResults.length > 0 && (
-                    <ul className="tmdb-match-list">
-                      {searchResults.map((match) => (
-                        <li key={match.id} className="tmdb-match-card">
-                          {match.poster_path ? (
-                            <img
-                              className="tmdb-match-poster"
-                              src={`https://image.tmdb.org/t/p/w185${match.poster_path}`}
-                              alt={`Poster for ${match.title}`}
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className="tmdb-match-poster tmdb-poster-placeholder">
-                              No poster
-                            </div>
-                          )}
-
-                          <div className="tmdb-match-info">
-                            <h4>
-                              {match.title} (
-                              {match.release_date
-                                ? match.release_date.slice(0, 4)
-                                : 'year unknown'}
-                              )
-                            </h4>
-
-                            {match.original_title !== match.title && (
-                              <p>Original title: {match.original_title}</p>
-                            )}
-
-                            <p className="tmdb-match-meta">
-                              {match.original_language?.toUpperCase() ??
-                                'Language unknown'}
-                              {match.vote_average
-                                ? ` · TMDB score ${match.vote_average.toFixed(1)} / 10`
-                                : ''}
-                            </p>
-
-                            <p className="tmdb-match-overview">
-                              {match.overview || 'No synopsis available.'}
-                            </p>
-
+                        return (
+                          <li key={film.key}>
+                            <strong>
+                              {film.title} ({film.year ?? 'year unknown'})
+                            </strong>{' '}
                             <button
                               type="button"
-                              onClick={() => void saveManualMatch(film, match)}
-                              disabled={
-                                manualBusyKey !== null || enrichBusy
-                              }
+                              onClick={() => void searchManualMatches(film)}
+                              disabled={manualBusyKey !== null || enrichBusy}
                             >
                               {manualBusyKey === film.key
-                                ? 'Saving…'
-                                : 'Use this match'}
+                                ? 'Searching…'
+                                : 'Search TMDB'}
                             </button>
+
+                            {searchResults && searchResults.length === 0 && (
+                              <p>
+                                No TMDB results found for this title and year.
+                              </p>
+                            )}
+
+                            {searchResults && searchResults.length > 0 && (
+                              <ul className="tmdb-match-list">
+                                {searchResults.map((match) => (
+                                  <li
+                                    key={match.id}
+                                    className="tmdb-match-card"
+                                  >
+                                    {match.poster_path ? (
+                                      <img
+                                        className="tmdb-match-poster"
+                                        src={`https://image.tmdb.org/t/p/w185${match.poster_path}`}
+                                        alt={`Poster for ${match.title}`}
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <div className="tmdb-match-poster tmdb-poster-placeholder">
+                                        No poster
+                                      </div>
+                                    )}
+
+                                    <div className="tmdb-match-info">
+                                      <h4>
+                                        {match.title} (
+                                        {match.release_date
+                                          ? match.release_date.slice(0, 4)
+                                          : 'year unknown'}
+                                        )
+                                      </h4>
+                                      {match.original_title !==
+                                        match.title && (
+                                        <p>
+                                          Original title:{' '}
+                                          {match.original_title}
+                                        </p>
+                                      )}
+                                      <p className="tmdb-match-meta">
+                                        {match.original_language?.toUpperCase() ??
+                                          'Language unknown'}
+                                        {match.vote_average
+                                          ? ` · TMDB score ${match.vote_average.toFixed(1)} / 10`
+                                          : ''}
+                                      </p>
+                                      <p className="tmdb-match-overview">
+                                        {match.overview ||
+                                          'No synopsis available.'}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          void saveManualMatch(film, match)
+                                        }
+                                        disabled={
+                                          manualBusyKey !== null || enrichBusy
+                                        }
+                                      >
+                                        {manualBusyKey === film.key
+                                          ? 'Saving…'
+                                          : 'Use this match'}
+                                      </button>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </details>
+                )}
+              </section>
+
+              {films.length > 0 && (
+                <section className="dashboard-overview">
+                  <div>
+                    <p className="wrapped-eyebrow">YOUR LIBRARY AT A GLANCE</p>
+                    <h2>General overview</h2>
+                  </div>
+
+                  <div className="dashboard-stats">
+                    <article className="dashboard-stat">
+                      <span>Films watched</span>
+                      <strong>{watchedFilms.length}</strong>
+                    </article>
+                    <article className="dashboard-stat">
+                      <span>Average rating</span>
+                      <strong>
+                        {averageRating !== null
+                          ? `${averageRating.toFixed(2)} / 5`
+                          : '—'}
+                      </strong>
+                    </article>
+                    <article className="dashboard-stat">
+                      <span>Estimated watch time</span>
+                      <strong>
+                        {filmsWithRuntime.length > 0
+                          ? formatWatchTime(totalWatchMinutes)
+                          : '—'}
+                      </strong>
+                      <small>
+                        Runtime data for {filmsWithRuntime.length} of{' '}
+                        {watchedFilms.length} watched films
+                      </small>
+                    </article>
+                    <article className="dashboard-stat">
+                      <span>Watchlist</span>
+                      <strong>{watchlistCount}</strong>
+                    </article>
+                  </div>
+
+                  <div className="dashboard-content-grid">
+                    <article className="dashboard-card rating-card">
+                      <h3>Rating distribution</h3>
+                      {ratedFilms.length > 0 ? (
+                        <div className="rating-chart">
+                          <span
+                            className="rating-chart-endpoint"
+                            aria-label="One star"
+                          >
+                            ★
+                          </span>
+
+                          <div className="rating-chart-bars">
+                            {ratingDistribution.map(({ rating, count }) => (
+                              <div
+                                className="rating-column"
+                                key={rating}
+                                tabIndex={0}
+                                aria-label={`${count} ${
+                                  count === 1 ? 'film' : 'films'
+                                } rated ${rating.toFixed(1)} out of 5`}
+                                data-tooltip={`${count} ${
+                                  count === 1 ? 'film' : 'films'
+                                } · ${rating.toFixed(1)} / 5`}
+                              >
+                                <span
+                                  className="rating-bar-fill"
+                                  style={{
+                                    height: `${(count / maxRatingCount) * 100}%`,
+                                  }}
+                                />
+                              </div>
+                            ))}
                           </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </section>
-      )}
 
-      {films.length > 0 && (
-        <>
-          <section>
-            <h2>Your library</h2>
-            <p>{films.length} imported titles</p>
-            <p>{watchedCount} watched films</p>
-            <p>{ratedFilms.length} rated films</p>
-            <p>{watchlistCount} watchlist titles</p>
-            <p>Average rating: {averageRating?.toFixed(2) ?? '—'} / 5</p>
+                          <span
+                            className="rating-chart-endpoint"
+                            aria-label="Five stars"
+                          >
+                            ★★★★★
+                          </span>
+                        </div>
+                      ) : (
+                        <p>No ratings found in this library yet.</p>
+                      )}
+                    </article>
 
-            <h3>Top-rated films</h3>
-            {topRatedFilms.length > 0 ? (
-              <ol>
-                {topRatedFilms.map((film) => (
-                  <li key={film.key}>
-                    {film.title} ({film.year ?? 'year unknown'}) —{' '}
-                    {film.rating?.toFixed(1)} / 5
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p>No rated films were found.</p>
-            )}
-          </section>
+                    <article className="dashboard-card">
+                      <h3>Top-rated films</h3>
+                      {topRatedFilms.length > 0 ? (
+                        <ol className="dashboard-top-films">
+                          {topRatedFilms.map((film) => (
+                            <li key={film.key}>
+                              <span>
+                                {film.title} ({film.year ?? 'year unknown'})
+                              </span>
+                              <strong>{film.rating?.toFixed(1)} / 5</strong>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p>No rated films were found.</p>
+                      )}
+                    </article>
+                  </div>
 
-          <section>
-            <h2>Wrapped preview</h2>
+                  <p className="dashboard-note">
+                    Watch time is estimated from available TMDB runtimes and
+                    logged viewings. Films without runtime data are not
+                    included.
+                  </p>
+                </section>
+              )}
+            </div>
+          )}
 
-            <label htmlFor="viewing-period">Viewing period</label>
-            <select
-              id="viewing-period"
-              value={period}
-              onChange={(event) => setPeriod(event.target.value)}
-            >
-              <option value="all-time">All time</option>
-              {years.map((year) => (
-                <option key={year} value={year}>
-                  {year}
-                </option>
-              ))}
-            </select>
+          {activeTab === 'review' && (
+            <div className="review-panel">
+              {films.length > 0 ? (
+                <section className="wrapped-section">
+                  <div className="wrapped-header">
+                    <div>
+                      <p className="wrapped-eyebrow">YOUR FILMS, IN REVIEW</p>
+                      <h2>Year in Review</h2>
+                      <p>Your viewing highlights for the selected period.</p>
+                    </div>
 
-            <p>
-              {periodFilms.length} films · {periodViewCount} logged viewings
-            </p>
+                    <div className="wrapped-controls">
+                      <label htmlFor="viewing-period">Viewing period</label>
+                      <select
+                        id="viewing-period"
+                        value={period}
+                        onChange={(event) => setPeriod(event.target.value)}
+                      >
+                        <option value="all-time">All time</option>
+                        {years.map((year) => (
+                          <option key={year} value={year}>
+                            {year}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
-            <h3>Most-watched films</h3>
-            {topWatchedFilms.length > 0 ? (
-              <ol>
-                {topWatchedFilms.map(({ film, watchCount }) => (
-                  <li key={film.key}>
-                    {film.title} — {watchCount}{' '}
-                    {watchCount === 1 ? 'viewing' : 'viewings'}
-                    {film.rating !== null && ` · ${film.rating.toFixed(1)} / 5`}
-                    {film.metadata?.countries.length
-                      ? ` · ${film.metadata.countries.join(', ')}`
-                      : ''}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p>
-                No dated Diary entries for this period yet. All-time includes
-                films marked watched without a diary date.
-              </p>
-            )}
+                  <div className="wrapped-metrics">
+                    <div className="wrapped-metric">
+                      <span>Films watched</span>
+                      <strong>{periodFilms.length}</strong>
+                    </div>
+                    <div className="wrapped-metric">
+                      <span>Logged viewings</span>
+                      <strong>{periodViewCount}</strong>
+                    </div>
+                  </div>
 
-            <h3>Highest-rated director</h3>
-            {topRatedDirector ? (
-              <p>
-                {topRatedDirector.name} —{' '}
-                {topRatedDirector.averageRating.toFixed(2)} / 5 across{' '}
-                {topRatedDirector.ratedFilmCount} rated films
-              </p>
-            ) : (
-              <p>
-                No director has at least two rated films in this period yet.
-              </p>
-            )}
+                  <div className="wrapped-grid">
+                    <article className="wrapped-card wrapped-card-films">
+                      <h3>Most-watched films</h3>
+                      {topWatchedFilms.length > 0 ? (
+                        <ol className="wrapped-top-films">
+                          {topWatchedFilms.map(({ film, watchCount }) => (
+                            <li key={film.key}>
+                              {film.metadata?.posterPath ? (
+                                <img
+                                  className="wrapped-film-poster"
+                                  src={`https://image.tmdb.org/t/p/w185${film.metadata.posterPath}`}
+                                  alt={`Poster for ${film.title}`}
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="wrapped-film-poster wrapped-poster-placeholder">
+                                  No poster
+                                </div>
+                              )}
 
-            <h3>Most-watched countries</h3>
-            {topWatchedCountries.length > 0 ? (
-              <ol>
-                {topWatchedCountries.map((country) => (
-                  <li key={country.name}>
-                    {country.name} — {country.watchCount} associated viewings
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p>
-                No country data for this period yet. Enrich the library first.
-              </p>
-            )}
-          </section>
-        </>
-      )}
-            <footer className="credits">
+                              <div className="wrapped-film-copy">
+                                <strong>{film.title}</strong>
+                                <span>
+                                  {watchCount}{' '}
+                                  {watchCount === 1 ? 'viewing' : 'viewings'}
+                                  {film.rating !== null &&
+                                    ` · ${film.rating.toFixed(1)} / 5`}
+                                  {film.metadata?.countries.length
+                                    ? ` · ${film.metadata.countries.join(', ')}`
+                                    : ''}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p>
+                          No dated Diary entries for this period yet. All-time
+                          includes films marked watched without a diary date.
+                        </p>
+                      )}
+                    </article>
+
+                    <article className="wrapped-card">
+                      <h3>Highest-rated director</h3>
+                      {topRatedDirector ? (
+                        <p className="wrapped-highlight">
+                          <strong>{topRatedDirector.name}</strong>
+                          <span>
+                            {topRatedDirector.averageRating.toFixed(2)} / 5
+                            across {topRatedDirector.ratedFilmCount} rated films
+                          </span>
+                        </p>
+                      ) : (
+                        <p>
+                          No director has at least two rated films in this
+                          period yet.
+                        </p>
+                      )}
+                    </article>
+
+                    <article className="wrapped-card">
+                      <h3>Most-watched countries</h3>
+                      {topWatchedCountries.length > 0 ? (
+                        <ol className="wrapped-country-list">
+                          {topWatchedCountries.map((country) => (
+                            <li key={country.name}>
+                              <strong>{country.name}</strong>
+                              <span>
+                                {country.watchCount} associated viewings
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p>
+                          No country data for this period yet. Enrich the
+                          library first.
+                        </p>
+                      )}
+                    </article>
+                  </div>
+                </section>
+              ) : (
+                <section className="review-empty">
+                  <h2>Your Year in Review will appear here</h2>
+                  <p>Add your Letterboxd data from the Dashboard.</p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('dashboard')}
+                  >
+                    Go to Dashboard
+                  </button>
+                </section>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <footer className="credits">
         <a
           href="https://www.themoviedb.org/"
           target="_blank"
