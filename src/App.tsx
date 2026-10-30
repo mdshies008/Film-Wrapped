@@ -529,6 +529,23 @@ function App() {
           </section>
         </>
       )}
+            <footer className="credits">
+        <a
+          href="https://www.themoviedb.org/"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="The Movie Database (TMDB)"
+        >
+          <img
+            src={`${import.meta.env.BASE_URL}tmdb.svg`}
+            alt="The Movie Database (TMDB)"
+          />
+        </a>
+        <p>
+          This product uses the TMDB API but is not endorsed or certified by
+          TMDB.
+        </p>
+      </footer>
     </main>
   );
 }

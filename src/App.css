@@ -248,3 +248,18 @@
     width: 68px;
   }
 }
+
+.credits {
+  margin: 3rem auto 1rem;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.credits img {
+  display: block;
+  width: 120px;
+  max-width: 100%;
+  margin: 0 auto 0.75rem;
+}
